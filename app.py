@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 import inferless
 import torch
+import time
 from transformers import AutoTokenizer, Mistral3ForConditionalGeneration, BitsAndBytesConfig
 
 
@@ -24,18 +25,38 @@ class ResponseObjects(BaseModel):
 class InferlessPythonModel:
     def initialize(self):
         model_id = "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+
+        start_time = time.time()
+        print("Downloading model snapshot...", flush=True)
         snapshot_download(repo_id=model_id)
+        print(f"Model snapshot downloaded in {time.time() - start_time:.2f} seconds.", flush=True)
+
+        start_time = time.time()
+        print("Setting up quantization...", flush=True)
         quantization_config = BitsAndBytesConfig(load_in_4bit=True)
-        
+        print(f"Quantization setup completed in {time.time() - start_time:.2f} seconds.", flush=True)
+
+        start_time = time.time()
+        print("Loading tokenizer...", flush=True)
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        print(f"Tokenizer loaded in {time.time() - start_time:.2f} seconds.", flush=True)
+
+        start_time = time.time()
+        print("Configuring chat template...", flush=True)
         self.tokenizer.chat_template = "{%- set today = strftime_now(\"%Y-%m-%d\") %}\n{%- set default_system_message = \"You are Mistral Small 3, a Large Language Model (LLM) created by Mistral AI, a French startup headquartered in Paris.\\nYour knowledge base was last updated on 2023-10-01. The current date is \" + today + \".\\n\\nWhen you're not sure about some information, you say that you don't have the information and don't make up anything.\\nIf the user's question is not clear, ambiguous, or does not provide enough context for you to accurately answer the question, you do not try to answer it right away and you rather ask the user to clarify their request (e.g. \\\"What are some good restaurants around me?\\\" => \\\"Where are you?\\\" or \\\"When is the next flight to Tokyo\\\" => \\\"Where do you travel from?\\\")\" %}\n\n{{- bos_token }}\n\n{%- if messages[0]['role'] == 'system' %}\n    {%- set system_message = messages[0]['content'] %}\n    {%- set loop_messages = messages[1:] %}\n{%- else %}\n    {%- set system_message = default_system_message %}\n    {%- set loop_messages = messages %}\n{%- endif %}\n{{- '[SYSTEM_PROMPT]' + system_message + '[/SYSTEM_PROMPT]' }}\n\n{%- for message in loop_messages %}\n    {%- if message['role'] == 'user' %}\n\t    {%- if message['content'] is string %}\n            {{- '[INST]' + message['content'] + '[/INST]' }}\n\t    {%- else %}\n\t\t    {{- '[INST]' }}\n\t\t    {%- for block in message['content'] %}\n\t\t\t    {%- if block['type'] == 'text' %}\n\t\t\t\t    {{- block['text'] }}\n\t\t\t    {%- elif block['type'] == 'image' or block['type'] == 'image_url' %}\n\t\t\t\t    {{- '[IMG]' }}\n\t\t\t\t{%- else %}\n\t\t\t\t    {{- raise_exception('Only text and image blocks are supported in message content!') }}\n\t\t\t\t{%- endif %}\n\t\t\t{%- endfor %}\n\t\t    {{- '[/INST]' }}\n\t\t{%- endif %}\n    {%- elif message['role'] == 'system' %}\n        {{- '[SYSTEM_PROMPT]' + message['content'] + '[/SYSTEM_PROMPT]' }}\n    {%- elif message['role'] == 'assistant' %}\n        {{- message['content'] + eos_token }}\n    {%- else %}\n        {{- raise_exception('Only user, system and assistant roles are supported!') }}\n    {%- endif %}\n{%- endfor %}"
-        
+        print(f"Chat template configured in {time.time() - start_time:.2f} seconds.", flush=True)
+
+        start_time = time.time()
+        print("Loading model...", flush=True)
         self.model = Mistral3ForConditionalGeneration.from_pretrained(
             model_id,
             trust_remote_code=True,
             quantization_config=quantization_config,
             device_map="cuda",
         )
+        print(f"Model loaded in {time.time() - start_time:.2f} seconds.", flush=True)
+
+        print("Initialization complete!", flush=True)
 
     def infer(self, request: RequestObjects) -> ResponseObjects:
         messages = [
